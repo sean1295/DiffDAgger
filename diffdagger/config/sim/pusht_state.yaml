@@ -1,0 +1,134 @@
+env_id: PushT-v2
+obs_mode: state_dict
+control_mode: pd_joint_pos
+render_mode: rgb_array
+max_episode_steps: 250
+num_init_ep: 20
+
+obs_keys: [agent_qpos, extra_tcp_pose, extra_obj_pose]
+proprio_dim: 21
+latent_dim: 0
+action_space: rel_joint_pos #ee_pose_6d joint_pos
+action_dim: ${if:"'joint_pos' in '${action_space}'", 7, 9}
+device: cuda
+obs_horizon: 1
+pred_horizon: 32
+action_horizon: 2
+prediction_type: v_prediction #epsilon sample v_prediction
+
+dataset_dir: /scratch/dcs3zc/PushTEnv
+normalizers_path: diffdagger/assets/normalizers/normalizers.pth 
+save_file_dir: ${dataset_dir}/results/state_${prediction_type}_${action_space}_tf_${train_freq}_${policy.patience}_temp
+
+max_train_steps: 30000
+epoch: 300
+train_freq: 4
+wait_timestep: 10 
+chkpt_dir: ${save_file_dir}  
+
+dataset:
+    _target_: dataset.datasets.TimeSeriesDataset
+    dataset_path: []
+    load_count: 0
+    obs_keys: ${obs_keys}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    validation_ratio: 0.0
+    device: ${device}
+    
+env:
+    _target_: gymnasium.make
+    id: ${env_id}
+    num_envs: 1
+    obs_mode: ${obs_mode}
+    control_mode: ${control_mode}
+    render_mode: ${render_mode}
+    max_episode_steps: ${max_episode_steps}
+    enable_shadow: true
+    sim_backend: gpu
+    robot_init_qpos_noise: 0.01
+
+eval_env:
+    _target_: gymnasium.make
+    id: ${env_id}
+    num_envs: 100
+    obs_mode: ${obs_mode}
+    control_mode: ${control_mode}
+    render_mode: ${render_mode}
+    max_episode_steps: ${max_episode_steps}
+    enable_shadow: true
+    sim_backend: gpu
+    robot_init_qpos_noise: 0.00
+
+expert:
+    _target_: agents.RL_agent.MultipleExperts
+    model: 
+        _target_: model.RL.PPO
+        obs_dim: 29
+        action_dim: 7
+    ckpts: 
+    - diffdagger/assets/expert/PushTHard_98_cw_202403033128.pth
+    obs_keys: [agent_qpos, agent_qvel, extra_tcp_pose, extra_obj_pose, extra_inter_area]
+    action_space: joint_pos
+    max_episode_steps: 120
+    success_mode: true
+    device: ${device}
+    
+policy:
+    _target_: agents.diffusion_policy.DiffDAggerPolicy    
+    
+    model:
+        _target_: model.unet1d.ConditionalUnet1D
+        input_dim: ${action_dim}
+        global_cond_dim: null
+        diffusion_step_embed_dim: 256
+        down_dims: [256, 512, 1024]
+        kernel_size: 5
+        n_groups: 8
+        
+    obs_keys: ${obs_keys}
+    proprio_dim: ${proprio_dim}
+    latent_dim: ${latent_dim}
+    action_dim: ${action_dim}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    vision_model: r3m
+    frozen_encoder: false
+    obs_encoder_group_norm: true
+    spatial_softmax: true
+    
+    num_inference_steps: 16
+    noise_scheduler:
+        _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler    
+        num_train_timesteps: 16
+        beta_start: 0.0001
+        beta_end: 0.02
+        beta_schedule: squaredcos_cap_v2
+        prediction_type: ${prediction_type}
+    optim:
+        _target_: torch.optim.AdamW
+        lr: 0.0003
+        weight_decay: 0.01
+        betas: [0.9, 0.99]  
+        fused: true
+    scheduler:
+        _target_: diffusers.optimization.get_scheduler
+        name: cosine
+        num_warmup_steps: 500
+    
+    ### DAgger
+    alpha: 0.9
+    batch_multiplier: 32
+    num_per_batch: 1
+    patience: 2
+    patience_window: ${policy.patience}
+
+train:
+    accelerator: "auto"  # or "gpu", "cpu"
+    devices: 1  # or number of GPUs
+    train_steps: null
+    train_bs: 64 # or whatever your train batch size is.
+    
+    

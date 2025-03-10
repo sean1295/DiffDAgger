@@ -1,0 +1,154 @@
+defaults:  
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+dataset_dir: /standard/liverobotics/dataset_stacking_1121_extra_100
+load_file: ${dataset_dir}/eef_pose_epsilon_r3m_unet_diffstep16_40k.pth
+max_episode_steps: 250
+obs_keys: [joints_state, end_effector_state, gripper_state, left_image, right_image, gripper_image]
+obs_dim: 3090
+action_dim: 10
+device: cuda
+is_vision: true
+obs_horizon: 1
+pred_horizon: 36
+action_horizon: 8
+action_space: eef_pose #joint_pos eef_pose
+prediction_type: epsilon #v_prediction epsilon
+normalizers_path: none
+skip_frames: 2
+
+dataset:
+    _target_: dataset.datasets.TimeSeriesDataset
+    dataset_path:
+    - ${dataset_dir}/replay_buffer.pth
+    - /standard/liverobotics/dataset_stacking_1120_extra_100/replay_buffer.pth
+    - /standard/liverobotics/dataset_stacking_1121_extra_20/replay_buffer.pth
+        # - /standard/liverobotics/dataset_stacking_1106/replay_buffer.pth
+    # - /standard/liverobotics/dataset_stacking_1108_extra_20/replay_buffer.pth
+    # - /standard/liverobotics/dataset_stacking_1109_extra_20/replay_buffer.pth
+    # - /standard/liverobotics/dataset_stacking_1112_extra_20/replay_buffer.pth
+    load_count: 40
+    partition_rank: none
+    num_partition: none
+    frequency: 30 #Hz
+    skip_frames: ${skip_frames}
+    image_latency_frame: 0
+    obs_keys: ${obs_keys}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    device: ${device}
+
+val_dataset:
+    _target_: dataset.datasets.TimeSeriesDataset
+    dataset_path:
+    - /standard/liverobotics/dataset_stacking_1106/replay_buffer.pth
+    load_count: 10
+    partition_rank: none
+    num_partition: none
+    frequency: 30 #Hz
+    skip_frames: ${skip_frames}
+    image_latency_frame: 0
+    obs_keys: ${obs_keys}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    device: ${device}
+
+test_dataset:
+    _target_: dataset.datasets.TimeSeriesDataset
+    dataset_path:
+    - /standard/liverobotics/dataset_stacking_1106/replay_buffer.pth
+    load_count: 1
+    frequency: 30 #Hz
+    skip_frames: ${skip_frames}
+    image_latency_frame: 0
+    obs_keys: ${obs_keys}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    device: ${device}    
+
+policy:
+    _target_: agents.diffusion_policy.DiffDAggerPolicy
+
+    model:
+        _target_: model.unet1d.ConditionalUnet1D
+        input_dim: ${action_dim}
+        use_obs_encoder: false
+        global_cond_dim: ${obs_dim}
+        diffusion_step_embed_dim: 1024
+        down_dims: [1024, 512, 256]
+        kernel_size: 5
+        n_groups: 8
+        dropout_ratio: 0.0
+
+    # model:
+    #     _target_: model.transformers.TransformerForDiffusion
+    #     input_dim: ${action_dim}
+    #     cond_dim: ${obs_dim} # 512 ${obs_dim}
+    #     horizon: ${pred_horizon}
+    #     diffusion_step_embed_dim: 512
+    #     p_drop_emb: 0.0
+    #     p_drop_attn: 0.0
+    #     n_cond_layers: 0
+    #     n_layer: 8
+    #     n_head: 4
+    #     causal_attn: true
+    #     n_obs_steps: ${obs_horizon} # 148 ${obs_horizon}
+        
+    normalizers_path: ${normalizers_path}
+    obs_keys: ${obs_keys}
+    obs_dim: ${obs_dim}
+    action_dim: ${action_dim}
+    action_space: ${action_space}
+    obs_horizon: ${obs_horizon}
+    pred_horizon: ${pred_horizon}
+    is_vision: ${is_vision}
+    vision_model: r3m
+    frozen_encoder: false
+    obs_encoder_group_norm: true
+    spatial_softmax: true
+    device: ${device}
+    
+    num_inference_steps: 16
+    noise_scheduler:
+        _target_: diffusers.schedulers.scheduling_ddim.DDIMScheduler    
+        num_train_timesteps: 16
+        beta_start: 0.0001
+        beta_end: 0.02
+        beta_schedule: squaredcos_cap_v2
+        prediction_type: ${prediction_type}
+        
+    ### DAgger
+    alpha: 0.99
+    batch_multiplier: 16
+    num_per_batch: 1
+    patience: 2
+
+train:
+    max_train_steps: 200000
+    train_steps: 0 #filled in run-time
+    epoch: 300
+    train_bs: 32
+    val_bs: 128
+    val_freq: 5000
+    
+optim:
+    lr : 0.0002
+    vision_lr: 0.0002
+    weight_decay: 0.01
+    betas: [0.9, 0.99]
+    # eps: 1e-8
+    
+scheduler: 
+    name: cosine
+    num_warmup_steps: 2000
+    
