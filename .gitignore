@@ -12,7 +12,6 @@ wandb
 lightning_logs/
 outputs
 DiffDAgger.egg-info
-*.pth
 *.out
 *.mp4
 *.slurm
