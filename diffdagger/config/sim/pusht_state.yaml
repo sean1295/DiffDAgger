@@ -119,7 +119,7 @@ policy:
         num_warmup_steps: 500
     
     ### DAgger
-    alpha: 0.9
+    alpha: 0.99
     batch_multiplier: 32
     num_per_batch: 1
     patience: 2
